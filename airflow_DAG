@@ -1,0 +1,74 @@
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime, timedelta
+import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+from gspread_dataframe import set_with_dataframe
+
+# Google Sheets Credentials JSON File (Upload to Airflow and update this path)
+GOOGLE_SHEETS_CREDENTIALS = "/path/to/your/ZBD_ADI.json"
+
+# Google Sheet ID (Extracted from the shared link)
+GOOGLE_SHEET_ID = "103IRIg9KTofgGJ9xJozblupTfjc3OPIuKgeKBlSKxgc"
+
+# CSV File Path (Ensure the file is accessible in Airflow)
+CSV_FILE_PATH = "/path/to/MATERILIZE_VIEW.csv"
+
+# Default arguments for Airflow
+default_args = {
+    "owner": "airflow",
+    "depends_on_past": False,
+    "start_date": datetime(2024, 2, 1),
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 3,
+    "retry_delay": timedelta(minutes=5),
+}
+
+# Define the DAG
+dag = DAG(
+    "export_marketing_to_google_sheets",
+    default_args=default_args,
+    description="Extract, summarize, and export marketing data to Google Sheets",
+    schedule_interval="0 1 * * *",  # Runs daily at 1 AM UTC
+    catchup=False,
+)
+
+def extract_and_summarize():
+    """Reads CSV, summarizes campaign performance, and writes results to Google Sheets."""
+    try:
+        # Load CSV file
+        df = pd.read_csv(CSV_FILE_PATH)
+
+        # Summarize campaign performance
+        df_summary = df.groupby("campaign").agg({
+            "total_spend": "sum",
+            "total_conversions": "sum",
+            "total_revenue": "sum"
+        }).reset_index()
+
+        # Authenticate with Google Sheets
+        creds = Credentials.from_service_account_file(*******************)
+        gc = gspread.authorize(creds)
+
+        # Open Google Sheet
+        worksheet = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+        # Export DataFrame to Google Sheets
+        set_with_dataframe(worksheet, df_summary)
+        
+        print("Data successfully written to Google Sheets!")
+    except Exception as e:
+        print(f"Error in processing: {e}")
+        raise
+
+# Define the Airflow Task
+export_task = PythonOperator(
+    task_id="extract_summarize_export",
+    python_callable=extract_and_summarize,
+    dag=dag,
+)
+
+# Define Task Order
+export_task
